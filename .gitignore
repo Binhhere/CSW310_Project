@@ -1,0 +1,8 @@
+*.class
+*.jar
+Project_310.zip
+.vscode/
+.idea/
+target/
+build/
+bin/
