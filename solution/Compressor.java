@@ -74,6 +74,7 @@ public class Compressor {
             visitedBuffer = new int[parentVol + 1024];
         }
 
+        BlockCache.clear();
         List<Region> totalRegions = new ArrayList<>(Math.min(X * Y * Z, 100000));
         byte[] blockData = new byte[parentVol];
 
@@ -113,12 +114,24 @@ public class Compressor {
                         continue;
                     }
 
+                    // Check duplicate block cache
+                    List<Region> cached = BlockCache.find(blockData, px, py, pz);
+                    if (cached != null) {
+                        for (Region r : cached) {
+                            totalRegions.add(new Region(startX + r.x, startY + r.y, startZ + r.z, r.w, r.h, r.d, r.label));
+                        }
+                        continue;
+                    }
+
                     // Run tournament on this parent block
                     boolean fastOnly = (System.currentTimeMillis() > deadline);
                     List<Region> bestBlockRegions = solveBlock(blockData, px, py, pz, fastOnly);
 
                     // Consolidate via pairwise merge and split-and-absorb
                     bestBlockRegions = consolidateBlock(bestBlockRegions, px, py, pz);
+
+                    // Store in pattern cache
+                    BlockCache.put(blockData, px, py, pz, bestBlockRegions);
 
                     // Shift coordinates to global map space and add to total
                     for (Region r : bestBlockRegions) {
