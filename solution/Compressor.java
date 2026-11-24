@@ -160,15 +160,15 @@ public class Compressor {
 
         int vol = px * py * pz;
 
-        // Fast-path 1: Adversarial Checkerboard Detector
-        if (AdversarialDetector.detect(block, px, py, pz) == AdversarialDetector.TYPE_CHECKERBOARD) {
-            return AdversarialDetector.solveCheckerboard(block, px, py, pz);
-        }
-
-        // Fast-path 2: If all components in block are solid monochromatic cuboids, emit immediately
+        // Fast-path 1: If all components in block are solid monochromatic cuboids, emit immediately (Option B recommendation)
         List<Region> allSolid = checkAllSolidComponents(block, px, py, pz);
         if (allSolid != null) {
             return allSolid;
+        }
+
+        // Fast-path 2: Adversarial Checkerboard Detector (per parent block, guarded by tau >= 0.985)
+        if (AdversarialDetector.detect(block, px, py, pz) == AdversarialDetector.TYPE_CHECKERBOARD) {
+            return AdversarialDetector.solveCheckerboard(block, px, py, pz);
         }
 
         // Fast-path 3: Compute MBVD Dual Lower Bound (provable OPT floor)
