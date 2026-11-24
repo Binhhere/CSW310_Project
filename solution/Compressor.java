@@ -306,6 +306,10 @@ public class Compressor {
         // 1. BFS to label connected components
         int cRun = ++compRunId;
         int numComps = 0;
+        int[] compSizes = new int[vol];
+        byte[] compLabels = new byte[vol];
+        int[][] compCellsList = new int[vol][];
+
         for (int i = 0; i < vol; i++) {
             if (compVisited[i] == cRun) continue;
             int compId = numComps++;
@@ -371,6 +375,14 @@ public class Compressor {
                     }
                 }
             }
+
+            compSizes[compId] = tail;
+            compLabels[compId] = c;
+            if (tail <= 64) {
+                int[] cells = new int[tail];
+                System.arraycopy(compQueue, 0, cells, 0, tail);
+                compCellsList[compId] = cells;
+            }
         }
 
         if (numComps <= 1) {
@@ -399,6 +411,19 @@ public class Compressor {
             for (int c = 0; c < numComps; c++) {
                 if (bestRegionsPerComp[c] == null || currentCompBuckets[c].size() < bestRegionsPerComp[c].size()) {
                     bestRegionsPerComp[c] = new ArrayList<>(currentCompBuckets[c]);
+                }
+            }
+        }
+
+        // 2.5 Exact Cover optimization for tiny components (<= 64 cells) using TinyCover
+        for (int c = 0; c < numComps; c++) {
+            if (compSizes[c] <= 64 && compCellsList[c] != null) {
+                List<Region> exact = TinyCover.solveTinyComponent(
+                    compCellsList[c], compSizes[c], px, py, pz, compLabels[c]);
+                if (exact != null && !exact.isEmpty()) {
+                    if (bestRegionsPerComp[c] == null || exact.size() < bestRegionsPerComp[c].size()) {
+                        bestRegionsPerComp[c] = exact;
+                    }
                 }
             }
         }
