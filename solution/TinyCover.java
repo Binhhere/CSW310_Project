@@ -180,7 +180,7 @@ public final class TinyCover {
     public static List<Compressor.Region> solveTinyComponent(
         int[] compCells, int compSize, int px, int py, int pz, byte label) {
         TinyCover tc = LOCAL.get();
-        int nb = tc.solve(compCells, compSize, px, py, 2000);
+        int nb = tc.solve(compCells, compSize, px, py, 1024);
         List<Compressor.Region> out = new ArrayList<>(nb);
         tc.emitTo(out, label);
         return out;

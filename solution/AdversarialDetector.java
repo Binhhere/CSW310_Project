@@ -54,7 +54,9 @@ public final class AdversarialDetector {
 
         if (totalAdj > 0) {
             double tau = (double) diffAdj / totalAdj;
-            if (tau > 0.96) {
+            // Claude Sonnet 5.5 safeguard: tightened threshold to >= 0.985
+            // Ensures embedded solid rods/plates are not prematurely pulverized into unit cells.
+            if (tau >= 0.985) {
                 // Adversarial high-frequency checkerboard / noise
                 return TYPE_CHECKERBOARD;
             }

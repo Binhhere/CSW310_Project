@@ -59,7 +59,7 @@ public class Compressor {
 
     public static List<Region> compress(Model model) {
         long startTime = System.currentTimeMillis();
-        long deadline = startTime + 4200; // 4.2s safety budget against 5.0s hard limit
+        long deadline = startTime + 4000; // 4.0s active safety governor against 5.0s hard limit
 
         int X = model.X, Y = model.Y, Z = model.Z;
         int px = model.px, py = model.py, pz = model.pz;
@@ -325,6 +325,82 @@ public class Compressor {
         return null;
     }
 
+    // Fast O(1) solver for small components k <= 3 (Gemini 4 Argon & Claude Sonnet insights).
+    // Bypasses DFS and tournament completely, resolving singletons, dominoes, and L-trominoes in O(1).
+    private static List<Region> solveSmallComponent(int[] cells, int k, int px, int py, int pz, byte label) {
+        if (k == 1) {
+            int p = cells[0];
+            int plane = px * py;
+            int z = p / plane, rem = p % plane, y = rem / px, x = rem % px;
+            List<Region> res = new ArrayList<>(1);
+            res.add(new Region(x, y, z, 1, 1, 1, label));
+            return res;
+        }
+        if (k == 2) {
+            int p0 = cells[0], p1 = cells[1];
+            int plane = px * py;
+            int z0 = p0 / plane, rem0 = p0 % plane, y0 = rem0 / px, x0 = rem0 % px;
+            int z1 = p1 / plane, rem1 = p1 % plane, y1 = rem1 / px, x1 = rem1 % px;
+            int minX = Math.min(x0, x1), minY = Math.min(y0, y1), minZ = Math.min(z0, z1);
+            int dx = Math.abs(x0 - x1) + 1, dy = Math.abs(y0 - y1) + 1, dz = Math.abs(z0 - z1) + 1;
+            List<Region> res = new ArrayList<>(1);
+            res.add(new Region(minX, minY, minZ, dx, dy, dz, label));
+            return res;
+        }
+        if (k == 3) {
+            int plane = px * py;
+            int[] xs = new int[3], ys = new int[3], zs = new int[3];
+            for (int i = 0; i < 3; i++) {
+                int p = cells[i];
+                zs[i] = p / plane;
+                int rem = p % plane;
+                ys[i] = rem / px;
+                xs[i] = rem % px;
+            }
+            int minX = Math.min(xs[0], Math.min(xs[1], xs[2]));
+            int maxX = Math.max(xs[0], Math.max(xs[1], xs[2]));
+            int minY = Math.min(ys[0], Math.min(ys[1], ys[2]));
+            int maxY = Math.max(ys[0], Math.max(ys[1], ys[2]));
+            int minZ = Math.min(zs[0], Math.min(zs[1], zs[2]));
+            int maxZ = Math.max(zs[0], Math.max(zs[1], zs[2]));
+            int vol = (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+            if (vol == 3) {
+                // Collinear 3-cell rod: 1 box
+                List<Region> res = new ArrayList<>(1);
+                res.add(new Region(minX, minY, minZ, maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1, label));
+                return res;
+            }
+            // Non-collinear L-tromino: provably OPT = 2 boxes.
+            // Find the corner cell adjacent to both other cells (Manhattan dist == 1)
+            int corner = -1;
+            for (int i = 0; i < 3; i++) {
+                int adjCount = 0;
+                for (int j = 0; j < 3; j++) {
+                    if (i != j) {
+                        int dist = Math.abs(xs[i] - xs[j]) + Math.abs(ys[i] - ys[j]) + Math.abs(zs[i] - zs[j]);
+                        if (dist == 1) adjCount++;
+                    }
+                }
+                if (adjCount == 2) {
+                    corner = i;
+                    break;
+                }
+            }
+            if (corner != -1) {
+                int other0 = (corner == 0) ? 1 : 0;
+                int other1 = (corner == 2) ? 1 : 2;
+                int bMinX = Math.min(xs[corner], xs[other0]), bMaxX = Math.max(xs[corner], xs[other0]);
+                int bMinY = Math.min(ys[corner], ys[other0]), bMaxY = Math.max(ys[corner], ys[other0]);
+                int bMinZ = Math.min(zs[corner], zs[other0]), bMaxZ = Math.max(zs[corner], zs[other0]);
+                List<Region> res = new ArrayList<>(2);
+                res.add(new Region(bMinX, bMinY, bMinZ, bMaxX - bMinX + 1, bMaxY - bMinY + 1, bMaxZ - bMinZ + 1, label));
+                res.add(new Region(xs[other1], ys[other1], zs[other1], 1, 1, 1, label));
+                return res;
+            }
+        }
+        return null;
+    }
+
     // Recombine candidates on disjoint monochromatic connected components (GPT-6.2-Astra theorem)
     // Guarantees sum_i min_h n_{ih} <= min_h sum_i n_{ih}
     private static List<Region> recombineByComponent(List<List<Region>> candidates, byte[] block, int px, int py, int pz) {
@@ -461,6 +537,17 @@ public class Compressor {
         // 2.5 Exact Cover optimization for tiny components (<= 64 cells) using TinyCover
         for (int c = 0; c < numComps; c++) {
             if (compSizes[c] <= 64 && compCellsList[c] != null) {
+                // Argon & Sonnet O(1) small component resolution for k <= 3
+                if (compSizes[c] <= 3) {
+                    List<Region> fast = solveSmallComponent(compCellsList[c], compSizes[c], px, py, pz, compLabels[c]);
+                    if (fast != null) {
+                        if (bestRegionsPerComp[c] == null || fast.size() < bestRegionsPerComp[c].size()) {
+                            bestRegionsPerComp[c] = fast;
+                        }
+                        continue;
+                    }
+                }
+
                 List<Region> exact = TinyCover.solveTinyComponent(
                     compCellsList[c], compSizes[c], px, py, pz, compLabels[c]);
                 if (exact != null && !exact.isEmpty()) {

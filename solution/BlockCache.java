@@ -25,6 +25,18 @@ public final class BlockCache {
         Arrays.fill(cachedRegions, null);
     }
 
+    // MurmurHash3 64-bit finalizer (fmix64).
+    // Eliminates FNV-1a low-bit alignment vulnerability identified by Gemini 4 Argon.
+    // Uniformly scatters all 64 bits of entropy across the 4096 direct-mapped slots.
+    private static long fmix64(long k) {
+        k ^= k >>> 33;
+        k *= 0xff51afd7ed558ccdL;
+        k ^= k >>> 33;
+        k *= 0xc4ceb9fe1a85ec53L;
+        k ^= k >>> 33;
+        return k;
+    }
+
     private static long hash64(byte[] data, int len, int px, int py, int pz) {
         long h = 0xcbf29ce484222325L;
         h = (h ^ px) * 0x100000001b3L;
@@ -33,7 +45,7 @@ public final class BlockCache {
         for (int i = 0; i < len; i++) {
             h = (h ^ (data[i] & 0xFF)) * 0x100000001b3L;
         }
-        return h;
+        return fmix64(h);
     }
 
     public static List<Compressor.Region> find(byte[] block, int px, int py, int pz) {
