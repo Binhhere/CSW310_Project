@@ -380,11 +380,34 @@ public class Compressor {
         return regions;
     }
 
-    // Largest Box First
+    private static int[] runXBuffer = new int[4096 * 4096 + 1024];
+
+    // Largest Box First with 1D Run-Length Acceleration
     private static List<Region> solveLargestBoxFirst(byte[] block, int px, int py, int pz) {
         int currentRun = ++runId;
         List<Region> regions = new ArrayList<>();
-        int unvisited = px * py * pz;
+        int volTotal = px * py * pz;
+        if (runXBuffer.length < volTotal) {
+            runXBuffer = new int[volTotal + 1024];
+        }
+
+        // Initialize runX for all rows and slices
+        for (int z = 0; z < pz; z++) {
+            for (int y = 0; y < py; y++) {
+                int base = (z * py + y) * px;
+                int count = 0;
+                for (int x = px - 1; x >= 0; x--) {
+                    if (x == px - 1 || block[base + x] != block[base + x + 1]) {
+                        count = 1;
+                    } else {
+                        count++;
+                    }
+                    runXBuffer[base + x] = count;
+                }
+            }
+        }
+
+        int unvisited = volTotal;
 
         while (unvisited > 0) {
             int bestVol = 0;
@@ -401,15 +424,10 @@ public class Compressor {
                         if (pz == 1) {
                             int minW = px - x;
                             for (int h = 1; y + h <= py; h++) {
-                                int w = 0;
-                                while (w < minW) {
-                                    int nidx = (y + h - 1) * px + (x + w);
-                                    if (visitedBuffer[nidx] == currentRun || block[nidx] != c) {
-                                        break;
-                                    }
-                                    w++;
-                                }
-                                minW = w;
+                                int rowIdx = (y + h - 1) * px + x;
+                                if (block[rowIdx] != c) break;
+                                int rW = runXBuffer[rowIdx];
+                                if (rW < minW) minW = rW;
                                 if (minW == 0) break;
                                 int area = h * minW;
                                 if (area > bestVol) {
@@ -423,20 +441,17 @@ public class Compressor {
                             for (int d = 1; z + d <= pz; d++) {
                                 int minW = px - x;
                                 for (int h = 1; y + h <= py; h++) {
-                                    int w = 0;
-                                    while (w < minW) {
-                                        boolean ok = true;
-                                        for (int dz = 0; dz < d; dz++) {
-                                            int nidx = ((z + dz) * py + (y + h - 1)) * px + (x + w);
-                                            if (visitedBuffer[nidx] == currentRun || block[nidx] != c) {
-                                                ok = false; break;
-                                            }
+                                    boolean match = true;
+                                    for (int dz = 0; dz < d; dz++) {
+                                        int nidx = ((z + dz) * py + (y + h - 1)) * px + x;
+                                        if (block[nidx] != c) {
+                                            match = false;
+                                            break;
                                         }
-                                        if (!ok) break;
-                                        w++;
+                                        int rW = runXBuffer[nidx];
+                                        if (rW < minW) minW = rW;
                                     }
-                                    minW = w;
-                                    if (minW == 0) break;
+                                    if (!match || minW == 0) break;
                                     int vol = d * h * minW;
                                     if (vol > bestVol || (vol == bestVol && (d > bd || (d == bd && h > bh)))) {
                                         bestVol = vol;
@@ -453,14 +468,29 @@ public class Compressor {
 
             if (bestVol == 0) break;
 
+            // Mark visited and update runXBuffer for affected rows
             for (int dz = 0; dz < bd; dz++) {
+                int cz = bz + dz;
                 for (int dy = 0; dy < bh; dy++) {
-                    int base = ((bz + dz) * py + (by + dy)) * px + bx;
+                    int cy = by + dy;
+                    int base = (cz * py + cy) * px;
                     for (int dx = 0; dx < bw; dx++) {
-                        visitedBuffer[base + dx] = currentRun;
+                        visitedBuffer[base + bx + dx] = currentRun;
+                    }
+                    int count = (bx + bw < px && visitedBuffer[base + bx + bw] != currentRun) ? runXBuffer[base + bx + bw] : 0;
+                    for (int x = bx + bw - 1; x >= 0; x--) {
+                        if (visitedBuffer[base + x] == currentRun) {
+                            count = 0;
+                        } else if (x + 1 < px && block[base + x] == block[base + x + 1]) {
+                            count++;
+                        } else {
+                            count = 1;
+                        }
+                        runXBuffer[base + x] = count;
                     }
                 }
             }
+
             unvisited -= bw * bh * bd;
             regions.add(new Region(bx, by, bz, bw, bh, bd, bestLabel));
         }

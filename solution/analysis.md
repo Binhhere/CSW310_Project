@@ -179,7 +179,7 @@ All public test cases (`2.in` through `17.in`) were evaluated on the standalone 
 | **14.in** | $16 \times 16 \times 8$ | 2,048 | 18 | **18** | 0 | 0.0% | 95.3 ms | PASS |
 | **15.in** | $32 \times 32 \times 12$ | 12,288 | 1,014 | **1,002** | -12 | **-1.2%** | 128.7 ms | PASS |
 | **16.in** | $128 \times 128 \times 16$ | 262,144 | 9,346 | **9,197** | -149 | **-1.6%** | 384.2 ms | PASS |
-| **17.in** | $256 \times 256 \times 16$ | 1,048,576 | 25,161 | **24,856** | -305 | **-1.2%** | 2192.1 ms | PASS |
+| **17.in** | $256 \times 256 \times 16$ | 1,048,576 | 25,161 | **24,856** | -305 | **-1.2%** | 1066.0 ms | PASS |
 
 ### Analysis of Baseline Ties and Differences
 

@@ -58,7 +58,7 @@ An ultra-high-performance spatial block compressor and standalone validation sui
 | **14.in** | $16 \times 16 \times 8$ | 2,048 | 18 | **18** | 0.0% | ~96 ms | PASS |
 | **15.in** | $32 \times 32 \times 12$ | 12,288 | 1,014 | **1,002** | **-12** | ~112 ms | PASS |
 | **16.in** | $128 \times 128 \times 16$ | 262,144 | 9,346 | **9,197** | **-149** | ~364 ms | PASS |
-| **17.in** | $256 \times 256 \times 16$ | 1,048,576 | 25,161 | **24,856** | **-305** | ~2192 ms | PASS |
+| **17.in** | $256 \times 256 \times 16$ | 1,048,576 | 25,161 | **24,856** | **-305** | ~1066 ms | PASS |
 
 - **Total Regions Saved**: Over 780+ regions eliminated compared to baseline.
 - **Verification**: 100% passed across all tests (0 gaps, 0 overlaps, zero out-of-bounds).
