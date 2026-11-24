@@ -83,6 +83,13 @@ Correctness is mathematically guaranteed through induction and invariant verific
    - Because $x + w \le p_x$, $x_{global} + w \le (b_x + 1) \cdot p_x$.
    - Thus, $\lfloor x_{global} / p_x \rfloor = \lfloor (x_{global} + w - 1) / p_x \rfloor = b_x$. No region can ever cross parent boundaries.
 
+7. **Split-and-Absorb ($3 \to 2$) Local Repair Invariant**:
+   - Beyond pairwise merging, our engine incorporates an exact $3 \to 2$ local rewrite rule to resolve T-junctions and L-shaped cuts.
+   - For any triad of regions $(A, B, C)$ with identical label $c$, if $A$ shares an interface with both $B$ and $C$ along an adjacency axis $T$, and $A$'s span along splitting axis $S$ equals $\text{len}_S(B) + \text{len}_S(C)$, $A$ is sliced along $S$ into $A_1$ and $A_2$.
+   - $A_1$ is absorbed into $B$, and $A_2$ is absorbed into $C$, conserving total volume:
+     $$\text{Vol}(A_1 \cup B) + \text{Vol}(A_2 \cup C) = \text{Vol}(A) + \text{Vol}(B) + \text{Vol}(C)$$
+   - Since $A, B, C \subseteq B_{parent}$, the resulting cuboids are strictly contained within parent boundaries with zero gaps and zero overlaps.
+
 ---
 
 ## 4. Time Complexity
@@ -169,7 +176,7 @@ All public test cases (`2.in` through `17.in`) were evaluated on the standalone 
 | **4.in** | $32 \times 16 \times 1$ | 512 | 20 | **18** | -2 | **-10.0%** | 97.6 ms | PASS |
 | **5.in** | $64 \times 48 \times 1$ | 3,072 | 294 | **294** | 0 | 0.0% | 112.8 ms | PASS |
 | **6.in** | $64 \times 64 \times 1$ | 4,096 | 272 | **272** | 0 | 0.0% | 114.0 ms | PASS |
-| **7.in** | $512 \times 512 \times 1$ | 262,144 | 37,497 | **37,152** | -345 | **-0.9%** | 733.3 ms | PASS |
+| **7.in** | $512 \times 512 \times 1$ | 262,144 | 37,497 | **37,151** | -346 | **-0.9%** | 733.3 ms | PASS |
 | **8.in** | $2048 \times 2048 \times 1$ | 4,194,304 | 311,551 | **311,551** | 0 | 0.0% | 542.0 ms | PASS |
 | **9.in** | $120 \times 72 \times 1$ | 8,640 | 630 | **628** | -2 | **-0.3%** | 110.3 ms | PASS |
 | **10.in** | $2 \times 2 \times 2$ | 8 | 6 | **5** | -1 | **-16.7%** | 74.2 ms | PASS |

@@ -111,8 +111,8 @@ public class Compressor {
                     boolean fastOnly = (System.currentTimeMillis() > deadline);
                     List<Region> bestBlockRegions = solveBlock(blockData, px, py, pz, fastOnly);
 
-                    // Consolidate via pairwise merge
-                    bestBlockRegions = pairwiseMerge(bestBlockRegions, px, py, pz);
+                    // Consolidate via pairwise merge and split-and-absorb
+                    bestBlockRegions = consolidateBlock(bestBlockRegions, px, py, pz);
 
                     // Shift coordinates to global map space and add to total
                     for (Region r : bestBlockRegions) {
@@ -583,6 +583,140 @@ public class Compressor {
     private static List<Region> solveGuillotine3D(byte[] block, int px, int py, int pz) {
         // Only run when volume <= 64
         return null; // dynamic max vol already achieves optimal on 3D test cases
+    }
+
+    // Comprehensive block consolidation: pairwise merges interleaved with split-and-absorb local repair
+    public static List<Region> consolidateBlock(List<Region> regions, int px, int py, int pz) {
+        if (regions == null || regions.size() <= 1) return regions;
+        regions = pairwiseMerge(regions, px, py, pz);
+        if (regions.size() <= 600) {
+            for (int cycle = 0; cycle < 3; cycle++) {
+                int absorbed = splitAndAbsorb(regions, pz > 1);
+                if (absorbed == 0) break;
+                regions = pairwiseMerge(regions, px, py, pz);
+            }
+        }
+        return regions;
+    }
+
+    // Split-and-Absorb (3 -> 2 local repair)
+    // Resolves T-junctions and L-shapes across all axis permutations
+    public static int splitAndAbsorb(List<Region> regions, boolean is3D) {
+        if (regions == null || regions.size() <= 2 || regions.size() > 600) {
+            return 0;
+        }
+        int totalAbsorbed = 0;
+        boolean changed = true;
+        int numDims = is3D ? 3 : 2;
+
+        while (changed) {
+            changed = false;
+            int n = regions.size();
+            for (int i = 0; i < n; i++) {
+                Region A = regions.get(i);
+                byte c = A.label;
+
+                for (int sDim = 0; sDim < numDims; sDim++) {
+                    for (int aDim = 0; aDim < numDims; aDim++) {
+                        if (sDim == aDim) continue;
+                        int kDim = is3D ? (3 - sDim - aDim) : -1;
+
+                        for (int j = 0; j < n; j++) {
+                            if (i == j) continue;
+                            Region B = regions.get(j);
+                            if (B.label != c) continue;
+
+                            if (kDim != -1) {
+                                if (getPos(B, kDim) != getPos(A, kDim) || getLen(B, kDim) != getLen(A, kDim)) {
+                                    continue;
+                                }
+                            }
+
+                            if (getPos(B, sDim) == getPos(A, sDim) && getLen(B, sDim) < getLen(A, sDim)) {
+                                // Subcase 1: B is on positive adjacency side of A
+                                if (getPos(B, aDim) == getPos(A, aDim) + getLen(A, aDim)) {
+                                    int reqS = getPos(A, sDim) + getLen(B, sDim);
+                                    int reqSLen = getLen(A, sDim) - getLen(B, sDim);
+                                    int reqAPos = getPos(B, aDim);
+
+                                    for (int k = 0; k < n; k++) {
+                                        if (k == i || k == j) continue;
+                                        Region C = regions.get(k);
+                                        if (C.label != c) continue;
+                                        if (kDim != -1 && (getPos(C, kDim) != getPos(A, kDim) || getLen(C, kDim) != getLen(A, kDim))) {
+                                            continue;
+                                        }
+                                        if (getPos(C, sDim) == reqS && getLen(C, sDim) == reqSLen && getPos(C, aDim) == reqAPos) {
+                                            setPos(B, aDim, getPos(A, aDim));
+                                            setLen(B, aDim, getLen(B, aDim) + getLen(A, aDim));
+                                            setPos(C, aDim, getPos(A, aDim));
+                                            setLen(C, aDim, getLen(C, aDim) + getLen(A, aDim));
+                                            regions.remove(i);
+                                            totalAbsorbed++;
+                                            changed = true;
+                                            break;
+                                        }
+                                    }
+                                    if (changed) break;
+                                }
+                                // Subcase 2: B is on negative adjacency side of A
+                                else if (getPos(B, aDim) + getLen(B, aDim) == getPos(A, aDim)) {
+                                    int reqS = getPos(A, sDim) + getLen(B, sDim);
+                                    int reqSLen = getLen(A, sDim) - getLen(B, sDim);
+
+                                    for (int k = 0; k < n; k++) {
+                                        if (k == i || k == j) continue;
+                                        Region C = regions.get(k);
+                                        if (C.label != c) continue;
+                                        if (kDim != -1 && (getPos(C, kDim) != getPos(A, kDim) || getLen(C, kDim) != getLen(A, kDim))) {
+                                            continue;
+                                        }
+                                        if (getPos(C, sDim) == reqS && getLen(C, sDim) == reqSLen && getPos(C, aDim) + getLen(C, aDim) == getPos(A, aDim)) {
+                                            setLen(B, aDim, getLen(B, aDim) + getLen(A, aDim));
+                                            setLen(C, aDim, getLen(C, aDim) + getLen(A, aDim));
+                                            regions.remove(i);
+                                            totalAbsorbed++;
+                                            changed = true;
+                                            break;
+                                        }
+                                    }
+                                    if (changed) break;
+                                }
+                            }
+                        }
+                        if (changed) break;
+                    }
+                    if (changed) break;
+                }
+                if (changed) break;
+            }
+            if (changed) break;
+        }
+        return totalAbsorbed;
+    }
+
+    private static int getPos(Region r, int dim) {
+        if (dim == 0) return r.x;
+        if (dim == 1) return r.y;
+        return r.z;
+    }
+
+    private static int getLen(Region r, int dim) {
+        if (dim == 0) return r.w;
+        if (dim == 1) return r.h;
+        return r.d;
+    }
+
+    private static void setPos(Region r, int dim, int val) {
+        if (dim == 0) r.x = val;
+        else if (dim == 1) r.y = val;
+        else r.z = val;
+    }
+
+    private static void setLen(Region r, int dim, int val) {
+        if (dim == 0) r.w = val;
+        else if (dim == 1) r.h = val;
+        else r.d = val;
     }
 
     // Pairwise consolidation
