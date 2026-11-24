@@ -154,18 +154,29 @@ public class Compressor {
 
         int vol = px * py * pz;
 
-        // Fast-path: If all components in block are solid monochromatic cuboids, emit immediately
+        // Fast-path 1: Adversarial Checkerboard Detector
+        if (AdversarialDetector.detect(block, px, py, pz) == AdversarialDetector.TYPE_CHECKERBOARD) {
+            return AdversarialDetector.solveCheckerboard(block, px, py, pz);
+        }
+
+        // Fast-path 2: If all components in block are solid monochromatic cuboids, emit immediately
         List<Region> allSolid = checkAllSolidComponents(block, px, py, pz);
         if (allSolid != null) {
             return allSolid;
         }
+
+        // Fast-path 3: Compute MBVD Dual Lower Bound (provable OPT floor)
+        int lb = DualLowerBound.compute(block, px, py, pz);
 
         List<List<Region>> candidates = new ArrayList<>();
 
         // Strategy A: Guillotine DP for small blocks
         if (pz == 1 && vol <= 256) {
             List<Region> g2 = solveGuillotine2D(block, px, py);
-            if (g2 != null) candidates.add(g2);
+            if (g2 != null) {
+                if (g2.size() <= lb) return g2;
+                candidates.add(g2);
+            }
         } else if (pz > 1 && vol <= 64) {
             List<Region> g3 = solveGuillotine3D(block, px, py, pz);
             if (g3 != null) return g3;
@@ -174,12 +185,20 @@ public class Compressor {
         // Strategy B: Largest Box First
         if ((pz > 1 && vol <= 4096) || (pz == 1 && vol <= 256)) {
             List<Region> lbf = solveLargestBoxFirst(block, px, py, pz);
-            if (lbf != null) candidates.add(lbf);
+            if (lbf != null) {
+                if (lbf.size() <= lb) return lbf;
+                candidates.add(lbf);
+            }
         }
 
         // Strategy C: Dynamic Max-Volume Greedy (forward and reverse)
-        candidates.add(solveDynamicMaxVol(block, px, py, pz, false));
-        candidates.add(solveDynamicMaxVol(block, px, py, pz, true));
+        List<Region> dFwd = solveDynamicMaxVol(block, px, py, pz, false);
+        if (dFwd.size() <= lb) return dFwd;
+        candidates.add(dFwd);
+
+        List<Region> dRev = solveDynamicMaxVol(block, px, py, pz, true);
+        if (dRev.size() <= lb) return dRev;
+        candidates.add(dRev);
 
         // Strategy D: Directional Greedy Permutations
         int[][] orders;
@@ -194,8 +213,13 @@ public class Compressor {
         }
 
         for (int[] o : orders) {
-            candidates.add(solveDirectional(block, px, py, pz, o, false));
-            candidates.add(solveDirectional(block, px, py, pz, o, true));
+            List<Region> cFwd = solveDirectional(block, px, py, pz, o, false);
+            if (cFwd.size() <= lb) return cFwd;
+            candidates.add(cFwd);
+
+            List<Region> cRev = solveDirectional(block, px, py, pz, o, true);
+            if (cRev.size() <= lb) return cRev;
+            candidates.add(cRev);
         }
 
         return recombineByComponent(candidates, block, px, py, pz);
