@@ -51,6 +51,12 @@ public class Compressor {
     private static int[] visitedBuffer = new int[4096 * 4096 + 1024];
     private static int runId = 1;
 
+    // Component decomposition scratch buffers
+    private static int[] compVisited = new int[4096 * 4096 + 1024];
+    private static int compRunId = 1;
+    private static int[] compQueue = new int[4096 * 4096 + 1024];
+    private static int[] compIdBuffer = new int[4096 * 4096 + 1024];
+
     public static List<Region> compress(Model model) {
         long startTime = System.currentTimeMillis();
         long deadline = startTime + 4200; // 4.2s safety budget against 5.0s hard limit
@@ -134,38 +140,33 @@ public class Compressor {
         }
 
         int vol = px * py * pz;
-        List<Region> best = null;
+
+        // Fast-path: If all components in block are solid monochromatic cuboids, emit immediately
+        List<Region> allSolid = checkAllSolidComponents(block, px, py, pz);
+        if (allSolid != null) {
+            return allSolid;
+        }
+
+        List<List<Region>> candidates = new ArrayList<>();
 
         // Strategy A: Guillotine DP for small blocks
         if (pz == 1 && vol <= 256) {
-            best = solveGuillotine2D(block, px, py);
+            List<Region> g2 = solveGuillotine2D(block, px, py);
+            if (g2 != null) candidates.add(g2);
         } else if (pz > 1 && vol <= 64) {
-            best = solveGuillotine3D(block, px, py, pz);
-            if (best != null) {
-                return best;
-            }
+            List<Region> g3 = solveGuillotine3D(block, px, py, pz);
+            if (g3 != null) return g3;
         }
 
         // Strategy B: Largest Box First
-        // For 3D (pz > 1), compression is weighted 70% in competition, so we allow up to 4096 cells
-        // For 2D (pz == 1), limit to 256 cells to maintain blazing execution speed on huge 2D grids
         if ((pz > 1 && vol <= 4096) || (pz == 1 && vol <= 256)) {
-            List<Region> cand = solveLargestBoxFirst(block, px, py, pz);
-            if (best == null || cand.size() < best.size()) {
-                best = cand;
-            }
+            List<Region> lbf = solveLargestBoxFirst(block, px, py, pz);
+            if (lbf != null) candidates.add(lbf);
         }
 
         // Strategy C: Dynamic Max-Volume Greedy (forward and reverse)
-        List<Region> dynFwd = solveDynamicMaxVol(block, px, py, pz, false);
-        if (best == null || dynFwd.size() < best.size()) {
-            best = dynFwd;
-        }
-
-        List<Region> dynRev = solveDynamicMaxVol(block, px, py, pz, true);
-        if (dynRev.size() < best.size()) {
-            best = dynRev;
-        }
+        candidates.add(solveDynamicMaxVol(block, px, py, pz, false));
+        candidates.add(solveDynamicMaxVol(block, px, py, pz, true));
 
         // Strategy D: Directional Greedy Permutations
         int[][] orders;
@@ -180,17 +181,240 @@ public class Compressor {
         }
 
         for (int[] o : orders) {
-            List<Region> candFwd = solveDirectional(block, px, py, pz, o, false);
-            if (candFwd.size() < best.size()) {
-                best = candFwd;
+            candidates.add(solveDirectional(block, px, py, pz, o, false));
+            candidates.add(solveDirectional(block, px, py, pz, o, true));
+        }
+
+        return recombineByComponent(candidates, block, px, py, pz);
+    }
+
+    // Fast-path: Check if every component in block is an exact solid monochromatic cuboid
+    private static List<Region> checkAllSolidComponents(byte[] block, int px, int py, int pz) {
+        int vol = px * py * pz;
+        int cRun = ++compRunId;
+        List<Region> solidRegions = new ArrayList<>();
+        int solidCells = 0;
+
+        for (int i = 0; i < vol; i++) {
+            if (compVisited[i] == cRun) continue;
+            byte c = block[i];
+
+            int head = 0, tail = 0;
+            compQueue[tail++] = i;
+            compVisited[i] = cRun;
+
+            int minX = i % px, maxX = minX;
+            int minY = (i / px) % py, maxY = minY;
+            int minZ = i / (px * py), maxZ = minZ;
+
+            while (head < tail) {
+                int curr = compQueue[head++];
+                int cx = curr % px;
+                int cy = (curr / px) % py;
+                int cz = curr / (px * py);
+
+                if (cx < minX) minX = cx;
+                if (cx > maxX) maxX = cx;
+                if (cy < minY) minY = cy;
+                if (cy > maxY) maxY = cy;
+                if (cz < minZ) minZ = cz;
+                if (cz > maxZ) maxZ = cz;
+
+                if (cx > 0) {
+                    int next = curr - 1;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cx + 1 < px) {
+                    int next = curr + 1;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cy > 0) {
+                    int next = curr - px;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cy + 1 < py) {
+                    int next = curr + px;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cz > 0) {
+                    int next = curr - px * py;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cz + 1 < pz) {
+                    int next = curr + px * py;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compQueue[tail++] = next;
+                    }
+                }
             }
-            List<Region> candRev = solveDirectional(block, px, py, pz, o, true);
-            if (candRev.size() < best.size()) {
-                best = candRev;
+
+            int compSize = tail;
+            int bw = maxX - minX + 1;
+            int bh = maxY - minY + 1;
+            int bd = maxZ - minZ + 1;
+            if (compSize == bw * bh * bd) {
+                solidRegions.add(new Region(minX, minY, minZ, bw, bh, bd, c));
+                solidCells += compSize;
+            } else {
+                return null;
             }
         }
 
-        return best;
+        if (solidCells == vol) {
+            return solidRegions;
+        }
+        return null;
+    }
+
+    // Recombine candidates on disjoint monochromatic connected components (GPT-6.2-Astra theorem)
+    // Guarantees sum_i min_h n_{ih} <= min_h sum_i n_{ih}
+    private static List<Region> recombineByComponent(List<List<Region>> candidates, byte[] block, int px, int py, int pz) {
+        if (candidates == null || candidates.isEmpty()) return new ArrayList<>();
+
+        List<Region> bestWhole = null;
+        for (List<Region> cand : candidates) {
+            if (cand != null) {
+                if (bestWhole == null || cand.size() < bestWhole.size()) {
+                    bestWhole = cand;
+                }
+            }
+        }
+
+        if (candidates.size() <= 1 || bestWhole == null) return bestWhole;
+
+        int vol = px * py * pz;
+        if (compIdBuffer.length < vol) {
+            compIdBuffer = new int[vol + 1024];
+        }
+
+        // 1. BFS to label connected components
+        int cRun = ++compRunId;
+        int numComps = 0;
+        for (int i = 0; i < vol; i++) {
+            if (compVisited[i] == cRun) continue;
+            int compId = numComps++;
+            byte c = block[i];
+
+            int head = 0, tail = 0;
+            compQueue[tail++] = i;
+            compVisited[i] = cRun;
+            compIdBuffer[i] = compId;
+
+            while (head < tail) {
+                int curr = compQueue[head++];
+                int cx = curr % px;
+                int cy = (curr / px) % py;
+                int cz = curr / (px * py);
+
+                if (cx > 0) {
+                    int next = curr - 1;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compIdBuffer[next] = compId;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cx + 1 < px) {
+                    int next = curr + 1;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compIdBuffer[next] = compId;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cy > 0) {
+                    int next = curr - px;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compIdBuffer[next] = compId;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cy + 1 < py) {
+                    int next = curr + px;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compIdBuffer[next] = compId;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cz > 0) {
+                    int next = curr - px * py;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compIdBuffer[next] = compId;
+                        compQueue[tail++] = next;
+                    }
+                }
+                if (cz + 1 < pz) {
+                    int next = curr + px * py;
+                    if (compVisited[next] != cRun && block[next] == c) {
+                        compVisited[next] = cRun;
+                        compIdBuffer[next] = compId;
+                        compQueue[tail++] = next;
+                    }
+                }
+            }
+        }
+
+        if (numComps <= 1) {
+            return bestWhole;
+        }
+
+        // 2. Group candidate regions by component
+        @SuppressWarnings("unchecked")
+        List<Region>[] bestRegionsPerComp = new List[numComps];
+        @SuppressWarnings("unchecked")
+        List<Region>[] currentCompBuckets = new List[numComps];
+        for (int c = 0; c < numComps; c++) {
+            currentCompBuckets[c] = new ArrayList<>();
+        }
+
+        for (List<Region> cand : candidates) {
+            if (cand == null) continue;
+            for (int c = 0; c < numComps; c++) {
+                currentCompBuckets[c].clear();
+            }
+            for (Region r : cand) {
+                int rootIdx = (r.z * py + r.y) * px + r.x;
+                int cid = compIdBuffer[rootIdx];
+                currentCompBuckets[cid].add(r);
+            }
+            for (int c = 0; c < numComps; c++) {
+                if (bestRegionsPerComp[c] == null || currentCompBuckets[c].size() < bestRegionsPerComp[c].size()) {
+                    bestRegionsPerComp[c] = new ArrayList<>(currentCompBuckets[c]);
+                }
+            }
+        }
+
+        // 3. Assemble combined result
+        List<Region> combined = new ArrayList<>();
+        for (int c = 0; c < numComps; c++) {
+            if (bestRegionsPerComp[c] != null) {
+                combined.addAll(bestRegionsPerComp[c]);
+            }
+        }
+
+        if (combined.size() < bestWhole.size()) {
+            return combined;
+        }
+        return bestWhole;
     }
 
     // Directional greedy expansion

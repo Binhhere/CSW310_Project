@@ -83,6 +83,14 @@ Correctness is mathematically guaranteed through induction and invariant verific
    - Because $x + w \le p_x$, $x_{global} + w \le (b_x + 1) \cdot p_x$.
    - Thus, $\lfloor x_{global} / p_x \rfloor = \lfloor (x_{global} + w - 1) / p_x \rfloor = b_x$. No region can ever cross parent boundaries.
 
+5. **Exact Solid Component Invariant ($|C| == \operatorname{vol}(\operatorname{bbox}(C))$)**:
+   - Every valid region is a monochromatic cuboid, and cuboids are face-connected. Thus, every parent block partitions strictly and independently into face-connected monochromatic components.
+   - For any component $C$ where $|C| == \operatorname{vol}(\operatorname{bbox}(C))$, the bounding box is a solid monochromatic cuboid. Since $\operatorname{OPT}(C) \ge 1$, $\operatorname{bbox}(C)$ achieves $\operatorname{OPT}(C) = 1$. Furthermore, by maximal connectivity, no other cell of the same label in the parent block can share a face with $C$, making $C$ globally immutable and unmergable. It is emitted directly in $O(1)$.
+6. **Component-Wise Tournament Recombination**:
+   - Because monochromatic components are mutually disjoint ($C_i \cap C_j = \emptyset$), candidate heuristics can be evaluated independently per component.
+   - For each component $i$, our engine selects the heuristic $h^*$ minimizing regional count:
+     $$\text{Total Regions} = \sum_{i} \min_{h} n_{ih} \le \min_{h} \sum_{i} n_{ih}$$
+   - This mathematically guarantees that the combined partition never performs worse than any individual heuristic and strictly unlocks cross-heuristic synergies.
 7. **Split-and-Absorb ($3 \to 2$) Local Repair Invariant**:
    - Beyond pairwise merging, our engine incorporates an exact $3 \to 2$ local rewrite rule to resolve T-junctions and L-shaped cuts.
    - For any triad of regions $(A, B, C)$ with identical label $c$, if $A$ shares an interface with both $B$ and $C$ along an adjacency axis $T$, and $A$'s span along splitting axis $S$ equals $\text{len}_S(B) + \text{len}_S(C)$, $A$ is sliced along $S$ into $A_1$ and $A_2$.
