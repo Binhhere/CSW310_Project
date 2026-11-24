@@ -25,6 +25,14 @@ public final class TinyCover {
     static final int N = 64;
     static final int B = N * (N + 1) / 2; // 2080 max candidate pairs
 
+    // Global Token Bucket budget across all components in a map.
+    // Prevents adversarial maps with tens of thousands of tiny components from exhausting the 5.0s time budget.
+    public static int GLOBAL_TINY_BUDGET = 200_000;
+
+    public static void resetGlobalBudget() {
+        GLOBAL_TINY_BUDGET = 200_000;
+    }
+
     final int[] xs = new int[N], ys = new int[N], zs = new int[N];
     final long[] ge = new long[N], le = new long[N], together = new long[N];
     final long[] boxMask = new long[B];
@@ -92,7 +100,11 @@ public final class TinyCover {
         long full = (k == 64) ? -1L : ((1L << k) - 1);
         best = greedy(full); // valid incumbent, large-first
         if (best == 1) { complete = true; return 1; }
-        complete = true; left = nodeBudget;
+        if (GLOBAL_TINY_BUDGET <= 0) {
+            complete = false;
+            return best; // Return instantaneous valid greedy incumbent without entering DFS
+        }
+        complete = true; left = Math.min(nodeBudget, GLOBAL_TINY_BUDGET);
         dfs(full, 0);
         return best;
     }
@@ -118,8 +130,9 @@ public final class TinyCover {
             return;
         }
         if (d + 1 >= best) return;
-        if (left == 0) { complete = false; return; }
+        if (left <= 0 || GLOBAL_TINY_BUDGET <= 0) { complete = false; return; }
         --left;
+        --GLOBAL_TINY_BUDGET;
         if (d + (Long.bitCount(r) + vmax - 1) / vmax >= best) return;
         int lb = d;
         for (long s = r; s != 0;) {

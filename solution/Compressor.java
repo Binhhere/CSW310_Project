@@ -74,6 +74,7 @@ public class Compressor {
             visitedBuffer = new int[parentVol + 1024];
         }
 
+        TinyCover.resetGlobalBudget();
         BlockCache.clear();
         List<Region> totalRegions = new ArrayList<>(Math.min(X * Y * Z, 100000));
         byte[] blockData = new byte[parentVol];
@@ -123,12 +124,17 @@ public class Compressor {
                         continue;
                     }
 
-                    // Run tournament on this parent block
+                    // Run tournament on this parent block with self-healing fallback
                     boolean fastOnly = (System.currentTimeMillis() > deadline);
-                    List<Region> bestBlockRegions = solveBlock(blockData, px, py, pz, fastOnly);
-
-                    // Consolidate via pairwise merge and split-and-absorb
-                    bestBlockRegions = consolidateBlock(bestBlockRegions, px, py, pz);
+                    List<Region> bestBlockRegions;
+                    try {
+                        bestBlockRegions = solveBlock(blockData, px, py, pz, fastOnly);
+                        // Consolidate via pairwise merge and split-and-absorb
+                        bestBlockRegions = consolidateBlock(bestBlockRegions, px, py, pz);
+                    } catch (Throwable t) {
+                        // Self-healing fallback: deterministic 1D run-length greedy slice
+                        bestBlockRegions = solveDynamicMaxVol(blockData, px, py, pz, false);
+                    }
 
                     // Store in pattern cache
                     BlockCache.put(blockData, px, py, pz, bestBlockRegions);

@@ -11,6 +11,9 @@
  */
 public final class DualLowerBound {
 
+    public static final long FP_SHIFT = 32;
+    public static final long FP_ONE = 1L << FP_SHIFT; // 4,294,967,296L
+
     private static int[] ex = new int[4096 * 4096 + 1024];
     private static int[] ey = new int[4096 * 4096 + 1024];
     private static int[] ez = new int[4096 * 4096 + 1024];
@@ -84,13 +87,20 @@ public final class DualLowerBound {
             }
         }
 
-        // 4. Sum reciprocal upper-bound volumes: O(V)
-        double sum = 0.0;
+        // 4. Sum reciprocal upper-bound volumes using 64-bit Fixed-Point Rational Math: O(V)
+        // Eliminates IEEE 754 precision drift entirely.
+        // Integer division (FP_ONE / maxVol) strictly truncates downward,
+        // guaranteeing mathematical lower-bound conservatism on all CPU architectures.
+        long scaledSum = 0L;
         for (int i = 0; i < vol; i++) {
             long maxVol = (long) ex[i] * ey[i] * ez[i];
-            sum += 1.0 / maxVol;
+            scaledSum += (FP_ONE / maxVol);
         }
 
-        return (int) Math.ceil(sum - 1e-9);
+        long lb = (scaledSum >> FP_SHIFT);
+        if ((scaledSum & (FP_ONE - 1L)) != 0) {
+            lb++;
+        }
+        return (int) lb;
     }
 }
