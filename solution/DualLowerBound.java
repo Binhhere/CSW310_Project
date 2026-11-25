@@ -14,16 +14,16 @@ public final class DualLowerBound {
     public static final long FP_SHIFT = 32;
     public static final long FP_ONE = 1L << FP_SHIFT; // 4,294,967,296L
 
-    private static int[] ex = new int[4096 * 4096 + 1024];
-    private static int[] ey = new int[4096 * 4096 + 1024];
-    private static int[] ez = new int[4096 * 4096 + 1024];
+    private static int[] ex = new int[0];
+    private static int[] ey = new int[0];
+    private static int[] ez = new int[0];
 
     public static int compute(byte[] block, int px, int py, int pz) {
         int vol = px * py * pz;
         if (ex.length < vol) {
-            ex = new int[vol + 1024];
-            ey = new int[vol + 1024];
-            ez = new int[vol + 1024];
+            ex = new int[vol];
+            ey = new int[vol];
+            ez = new int[vol];
         }
 
         // 1. Directional extent along X: O(V)

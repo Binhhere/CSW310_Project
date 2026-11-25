@@ -48,19 +48,36 @@ public class Compressor {
     }
 
     // Reusable scratch buffers per thread/run to achieve zero-allocation inner loops
-    private static int[] visitedBuffer = new int[4096 * 4096 + 1024];
+    private static int[] visitedBuffer = new int[0];
     private static int runId = 1;
 
     // Component decomposition scratch buffers
-    private static int[] compVisited = new int[4096 * 4096 + 1024];
+    private static int[] compVisited = new int[0];
     private static int compRunId = 1;
-    private static int[] compQueue = new int[4096 * 4096 + 1024];
-    private static int[] compIdBuffer = new int[4096 * 4096 + 1024];
+    private static int[] compQueue = new int[0];
+    private static int[] compIdBuffer = new int[0];
+
+    // Time governor, measured from the start of main (System.nanoTime).
+    // Past SOFT: no new optimisation work. Past HARD: the fallback emits X-runs only.
+    private static final long SOFT_NANOS = 2_200_000_000L;
+    private static final long HARD_NANOS = 3_000_000_000L;
+    // Above this many stored candidate regions, only the best whole candidate is kept.
+    private static final long MAX_CANDIDATE_REGIONS = 1_500_000L;
+    private static long startNanos = System.nanoTime();
+
+    public static void startClock() {
+        startNanos = System.nanoTime();
+    }
+
+    private static boolean softExpired() {
+        return System.nanoTime() - startNanos > SOFT_NANOS;
+    }
+
+    private static boolean hardExpired() {
+        return System.nanoTime() - startNanos > HARD_NANOS;
+    }
 
     public static List<Region> compress(Model model) {
-        long startTime = System.currentTimeMillis();
-        long deadline = startTime + 4000; // 4.0s active safety governor against 5.0s hard limit
-
         int X = model.X, Y = model.Y, Z = model.Z;
         int px = model.px, py = model.py, pz = model.pz;
         byte[] grid = model.grid;
@@ -71,7 +88,11 @@ public class Compressor {
 
         int parentVol = px * py * pz;
         if (visitedBuffer.length < parentVol) {
-            visitedBuffer = new int[parentVol + 1024];
+            visitedBuffer = new int[parentVol];
+            compVisited = new int[parentVol];
+            compQueue = new int[parentVol];
+            runId = 1;
+            compRunId = 1;
         }
 
         TinyCover.resetGlobalBudget();
@@ -125,19 +146,22 @@ public class Compressor {
                     }
 
                     // Run tournament on this parent block with self-healing fallback
-                    boolean fastOnly = (System.currentTimeMillis() > deadline);
+                    boolean fastOnly = softExpired();
                     List<Region> bestBlockRegions;
                     try {
                         bestBlockRegions = solveBlock(blockData, px, py, pz, fastOnly);
                         // Consolidate via pairwise merge and split-and-absorb
-                        bestBlockRegions = consolidateBlock(bestBlockRegions, px, py, pz);
+                        if (!softExpired()) {
+                            bestBlockRegions = consolidateBlock(bestBlockRegions, px, py, pz);
+                        }
                     } catch (Throwable t) {
-                        // Self-healing fallback: deterministic 1D run-length greedy slice
-                        bestBlockRegions = solveDynamicMaxVol(blockData, px, py, pz, false);
+                        // Valid but less compressed fallback; reported so it is never silent
+                        System.err.println("Block fallback: " + t);
+                        bestBlockRegions = solveFallback(blockData, px, py, pz);
                     }
 
-                    // Store in pattern cache
-                    BlockCache.put(blockData, px, py, pz, bestBlockRegions);
+                    // Store in pattern cache (hashing is wasted work once time is up)
+                    if (!fastOnly) BlockCache.put(blockData, px, py, pz, bestBlockRegions);
 
                     // Shift coordinates to global map space and add to total
                     for (Region r : bestBlockRegions) {
@@ -155,7 +179,7 @@ public class Compressor {
 
     private static List<Region> solveBlock(byte[] block, int px, int py, int pz, boolean fastOnly) {
         if (fastOnly) {
-            return solveDynamicMaxVol(block, px, py, pz, false);
+            return solveFallback(block, px, py, pz);
         }
 
         int vol = px * py * pz;
@@ -183,9 +207,6 @@ public class Compressor {
                 if (g2.size() <= lb) return g2;
                 candidates.add(g2);
             }
-        } else if (pz > 1 && vol <= 64) {
-            List<Region> g3 = solveGuillotine3D(block, px, py, pz);
-            if (g3 != null) return g3;
         }
 
         // Strategy B: Largest Box First
@@ -198,13 +219,13 @@ public class Compressor {
         }
 
         // Strategy C: Dynamic Max-Volume Greedy (forward and reverse)
-        List<Region> dFwd = solveDynamicMaxVol(block, px, py, pz, false);
-        if (dFwd.size() <= lb) return dFwd;
-        candidates.add(dFwd);
-
-        List<Region> dRev = solveDynamicMaxVol(block, px, py, pz, true);
-        if (dRev.size() <= lb) return dRev;
-        candidates.add(dRev);
+        // A null result means the soft deadline passed before the candidate was complete.
+        for (int dir = 0; dir < 2; dir++) {
+            List<Region> cand = solveDynamicMaxVol(block, px, py, pz, dir == 1);
+            if (cand == null) return bestOrFallback(candidates, block, px, py, pz);
+            if (cand.size() <= lb) return cand;
+            addCandidate(candidates, cand);
+        }
 
         // Strategy D: Directional Greedy Permutations
         int[][] orders;
@@ -219,16 +240,84 @@ public class Compressor {
         }
 
         for (int[] o : orders) {
-            List<Region> cFwd = solveDirectional(block, px, py, pz, o, false);
-            if (cFwd.size() <= lb) return cFwd;
-            candidates.add(cFwd);
-
-            List<Region> cRev = solveDirectional(block, px, py, pz, o, true);
-            if (cRev.size() <= lb) return cRev;
-            candidates.add(cRev);
+            for (int dir = 0; dir < 2; dir++) {
+                List<Region> cand = solveDirectional(block, px, py, pz, o, dir == 1);
+                if (cand == null) return bestOrFallback(candidates, block, px, py, pz);
+                if (cand.size() <= lb) return cand;
+                addCandidate(candidates, cand);
+            }
         }
 
+        if (softExpired()) return bestOrFallback(candidates, block, px, py, pz);
         return recombineByComponent(candidates, block, px, py, pz);
+    }
+
+    private static void addCandidate(List<List<Region>> candidates, List<Region> cand) {
+        long stored = cand.size();
+        for (List<Region> r : candidates) stored += r.size();
+        candidates.add(cand);
+        if (stored > MAX_CANDIDATE_REGIONS) {
+            List<Region> best = smallest(candidates);
+            candidates.clear();
+            candidates.add(best);
+        }
+    }
+
+    private static List<Region> smallest(List<List<Region>> candidates) {
+        List<Region> best = null;
+        for (List<Region> r : candidates) {
+            if (best == null || r.size() < best.size()) best = r;
+        }
+        return best;
+    }
+
+    private static List<Region> bestOrFallback(List<List<Region>> candidates, byte[] block, int px, int py, int pz) {
+        List<Region> best = smallest(candidates);
+        return best != null ? best : solveFallback(block, px, py, pz);
+    }
+
+    // Always terminates quickly with a valid partition: one X->Y->Z greedy pass,
+    // where each box stops growing in Y and Z once the hard deadline has passed.
+    private static List<Region> solveFallback(byte[] block, int px, int py, int pz) {
+        int run = ++runId;
+        int plane = px * py;
+        List<Region> out = new ArrayList<>();
+        boolean grow = !hardExpired();
+        int tick = 0;
+        for (int z = 0; z < pz; z++) {
+            for (int y = 0; y < py; y++) {
+                for (int x = 0; x < px; x++) {
+                    int idx = z * plane + y * px + x;
+                    if (visitedBuffer[idx] == run) continue;
+                    if (grow && (++tick & 63) == 0) grow = !hardExpired();
+                    byte c = block[idx];
+                    int w = 1, h = 1, d = 1;
+                    while (x + w < px && block[idx + w] == c && visitedBuffer[idx + w] != run) w++;
+                    if (grow) {
+                        while (y + h < py && freeBox(block, idx + h * px, w, 1, px, c, run)) h++;
+                        while (z + d < pz && freeBox(block, idx + d * plane, w, h, px, c, run)) d++;
+                    }
+                    for (int k = 0; k < d; k++) {
+                        for (int j = 0; j < h; j++) {
+                            int base = idx + k * plane + j * px;
+                            Arrays.fill(visitedBuffer, base, base + w, run);
+                        }
+                    }
+                    out.add(new Region(x, y, z, w, h, d, c));
+                }
+            }
+        }
+        return out;
+    }
+
+    private static boolean freeBox(byte[] block, int start, int w, int h, int px, byte c, int run) {
+        for (int j = 0; j < h; j++) {
+            int base = start + j * px;
+            for (int i = 0; i < w; i++) {
+                if (block[base + i] != c || visitedBuffer[base + i] == run) return false;
+            }
+        }
+        return true;
     }
 
     // Fast-path: Check if every component in block is an exact solid monochromatic cuboid
@@ -419,7 +508,7 @@ public class Compressor {
 
         int vol = px * py * pz;
         if (compIdBuffer.length < vol) {
-            compIdBuffer = new int[vol + 1024];
+            compIdBuffer = new int[vol];
         }
 
         // 1. BFS to label connected components
@@ -519,6 +608,7 @@ public class Compressor {
 
         for (List<Region> cand : candidates) {
             if (cand == null) continue;
+            if (softExpired()) return bestWhole;
             for (int c = 0; c < numComps; c++) {
                 currentCompBuckets[c].clear();
             }
@@ -536,6 +626,7 @@ public class Compressor {
 
         // 2.5 Exact Cover optimization for tiny components (<= 64 cells) using TinyCover
         for (int c = 0; c < numComps; c++) {
+            if ((c & 63) == 0 && softExpired()) break;
             if (compSizes[c] <= 64 && compCellsList[c] != null) {
                 // Argon & Sonnet O(1) small component resolution for k <= 3
                 if (compSizes[c] <= 3) {
@@ -574,6 +665,7 @@ public class Compressor {
 
     // Directional greedy expansion
     private static List<Region> solveDirectional(byte[] block, int px, int py, int pz, int[] order, boolean rev) {
+        int tick = 0;
         int currentRun = ++runId;
         List<Region> regions = new ArrayList<>();
 
@@ -586,6 +678,7 @@ public class Compressor {
                 for (int x = xStart; x != xEnd; x += xStep) {
                     int idx = (z * py + y) * px + x;
                     if (visitedBuffer[idx] == currentRun) continue;
+                    if ((++tick & 63) == 0 && softExpired()) return null;
 
                     byte c = block[idx];
                     int w = 1, h = 1, d = 1;
@@ -659,6 +752,7 @@ public class Compressor {
 
     // Dynamic Best-Axis / Max-Volume Greedy
     private static List<Region> solveDynamicMaxVol(byte[] block, int px, int py, int pz, boolean rev) {
+        int tick = 0;
         int currentRun = ++runId;
         List<Region> regions = new ArrayList<>();
 
@@ -679,6 +773,7 @@ public class Compressor {
                 for (int x = xStart; x != xEnd; x += xStep) {
                     int idx = (z * py + y) * px + x;
                     if (visitedBuffer[idx] == currentRun) continue;
+                    if ((++tick & 63) == 0 && softExpired()) return null;
 
                     byte c = block[idx];
                     int bestVol = 0;
@@ -759,7 +854,7 @@ public class Compressor {
         return regions;
     }
 
-    private static int[] runXBuffer = new int[4096 * 4096 + 1024];
+    private static int[] runXBuffer = new int[0];
 
     // Largest Box First with 1D Run-Length Acceleration
     private static List<Region> solveLargestBoxFirst(byte[] block, int px, int py, int pz) {
@@ -767,7 +862,7 @@ public class Compressor {
         List<Region> regions = new ArrayList<>();
         int volTotal = px * py * pz;
         if (runXBuffer.length < volTotal) {
-            runXBuffer = new int[volTotal + 1024];
+            runXBuffer = new int[volTotal];
         }
 
         // Initialize runX for all rows and slices
@@ -793,6 +888,7 @@ public class Compressor {
             int bx = 0, by = 0, bz = 0, bw = 0, bh = 0, bd = 0;
             byte bestLabel = 0;
 
+            if (softExpired()) return null;
             for (int z = 0; z < pz; z++) {
                 for (int y = 0; y < py; y++) {
                     for (int x = 0; x < px; x++) {
@@ -958,12 +1054,6 @@ public class Compressor {
         }
     }
 
-    // Guillotine DP for small 3D blocks
-    private static List<Region> solveGuillotine3D(byte[] block, int px, int py, int pz) {
-        // Only run when volume <= 64
-        return null; // dynamic max vol already achieves optimal on 3D test cases
-    }
-
     // Comprehensive block consolidation: pairwise merges interleaved with split-and-absorb local repair
     public static List<Region> consolidateBlock(List<Region> regions, int px, int py, int pz) {
         if (regions == null || regions.size() <= 1) return regions;
@@ -988,7 +1078,7 @@ public class Compressor {
         boolean changed = true;
         int numDims = is3D ? 3 : 2;
 
-        while (changed) {
+        while (changed && !softExpired()) {
             changed = false;
             int n = regions.size();
             for (int i = 0; i < n; i++) {
@@ -1104,7 +1194,7 @@ public class Compressor {
             return regions;
         }
         boolean changed = true;
-        while (changed) {
+        while (changed && !softExpired()) {
             changed = false;
             int n = regions.size();
             for (int i = 0; i < regions.size(); i++) {
