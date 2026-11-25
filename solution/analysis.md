@@ -27,8 +27,8 @@ Because no region may cross parent block boundaries, the global optimization pro
 6. **Tournament candidates**:
    - Guillotine DP in 2D for $V \le 256$ (best partition obtainable by recursive full cuts).
    - Largest-Box-First for $V \le 4096$ in 3D and $V \le 256$ in 2D.
-   - Dynamic best-axis greedy, forward and reverse scan: tries every axis order at each seed and keeps the largest box (larger depth wins ties).
-   - Directional greedy for every axis order (2 in 2D, 6 in 3D), forward and reverse.
+   - Dynamic best-axis greedy (3D only), forward and reverse scan: tries every axis order at each seed and keeps the largest box (larger depth wins ties).
+   - Directional greedy for every axis order (2 in 2D, 6 in 3D), forward and reverse. A reverse scan runs the forward solver on the block mirrored along every axis, then maps the regions back. Mirroring is a one-to-one map of cells, so the partition stays valid.
 7. **Component recombination**: the best candidate is chosen separately for each component. Components of at most 3 cells are solved directly; others of at most 64 cells are also tried with `TinyCover` (branch and bound, 1,024 nodes per component and 200,000 per map). This step is skipped when the block is a single component.
 8. **Consolidation**: pairwise merging (lists up to 1,500 regions), then up to three cycles of 3-to-2 split-and-absorb (lists up to 600), each cycle performing at most one repair.
 9. **Time governor**: measured from the start of `main`. After 2.2 s, unfinished candidates are abandoned, consolidation stops, and remaining blocks use one X-Y-Z greedy pass. After 3.0 s that pass emits X-runs only. Every path yields a valid partition. Output can therefore vary with machine speed, but only on maps that reach the limit.
@@ -169,24 +169,24 @@ All public test cases (`2.in` through `17.in`) were evaluated on the standalone 
 
 | Dataset | Dimensions ($X \times Y \times Z$) | Total Cells | Baseline Regions | Our Regions | Absolute Difference | Relative Change | Compression Ratio | Runtime (ms) | Correctness |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **2.in** | $4 \times 4 \times 1$ | 16 | 11 | **9** | -2 | **-18.2%** | 0.5625 | 117 ms | PASS |
-| **3.in** | $24 \times 16 \times 1$ | 384 | 18 | **18** | 0 | 0.0% | 0.0469 | 126 ms | PASS |
-| **4.in** | $32 \times 16 \times 1$ | 512 | 20 | **18** | -2 | **-10.0%** | 0.0352 | 151 ms | PASS |
-| **5.in** | $64 \times 48 \times 1$ | 3,072 | 294 | **294** | 0 | 0.0% | 0.0957 | 242 ms | PASS |
-| **6.in** | $64 \times 64 \times 1$ | 4,096 | 272 | **272** | 0 | 0.0% | 0.0664 | 137 ms | PASS |
-| **7.in** | $512 \times 512 \times 1$ | 262,144 | 37,497 | **37,151** | -346 | **-0.9%** | 0.1417 | 1163 ms | PASS |
-| **8.in** | $2048 \times 2048 \times 1$ | 4,194,304 | 311,551 | **311,551** | 0 | 0.0% | 0.0743 | 1445 ms | PASS |
-| **9.in** | $120 \times 72 \times 1$ | 8,640 | 630 | **628** | -2 | **-0.3%** | 0.0727 | 375 ms | PASS |
-| **10.in** | $2 \times 2 \times 2$ | 8 | 6 | **5** | -1 | **-16.7%** | 0.6250 | 124 ms | PASS |
-| **11.in** | $12 \times 8 \times 8$ | 768 | 8 | **8** | 0 | 0.0% | 0.0104 | 134 ms | PASS |
-| **12.in** | $12 \times 8 \times 8$ | 768 | 32 | **32** | 0 | 0.0% | 0.0417 | 118 ms | PASS |
-| **13.in** | $12 \times 8 \times 8$ | 768 | 14 | **14** | 0 | 0.0% | 0.0182 | 128 ms | PASS |
-| **14.in** | $16 \times 16 \times 8$ | 2,048 | 18 | **18** | 0 | 0.0% | 0.0088 | 107 ms | PASS |
-| **15.in** | $32 \times 32 \times 12$ | 12,288 | 1,014 | **1,002** | -12 | **-1.2%** | 0.0815 | 154 ms | PASS |
-| **16.in** | $128 \times 128 \times 16$ | 262,144 | 9,346 | **9,197** | -149 | **-1.6%** | 0.0351 | 701 ms | PASS |
-| **17.in** | $256 \times 256 \times 16$ | 1,048,576 | 25,161 | **24,856** | -305 | **-1.2%** | 0.0237 | 1703 ms | PASS |
+| **2.in** | $4 \times 4 \times 1$ | 16 | 11 | **9** | -2 | **-18.2%** | 0.5625 | 90 ms | PASS |
+| **3.in** | $24 \times 16 \times 1$ | 384 | 18 | **18** | 0 | 0.0% | 0.0469 | 89 ms | PASS |
+| **4.in** | $32 \times 16 \times 1$ | 512 | 20 | **18** | -2 | **-10.0%** | 0.0352 | 98 ms | PASS |
+| **5.in** | $64 \times 48 \times 1$ | 3,072 | 294 | **294** | 0 | 0.0% | 0.0957 | 139 ms | PASS |
+| **6.in** | $64 \times 64 \times 1$ | 4,096 | 272 | **272** | 0 | 0.0% | 0.0664 | 99 ms | PASS |
+| **7.in** | $512 \times 512 \times 1$ | 262,144 | 37,497 | **37,150** | -347 | **-0.9%** | 0.1417 | 863 ms | PASS |
+| **8.in** | $2048 \times 2048 \times 1$ | 4,194,304 | 311,551 | **310,963** | -588 | **-0.2%** | 0.0741 | 1083 ms | PASS |
+| **9.in** | $120 \times 72 \times 1$ | 8,640 | 630 | **628** | -2 | **-0.3%** | 0.0727 | 271 ms | PASS |
+| **10.in** | $2 \times 2 \times 2$ | 8 | 6 | **5** | -1 | **-16.7%** | 0.6250 | 105 ms | PASS |
+| **11.in** | $12 \times 8 \times 8$ | 768 | 8 | **8** | 0 | 0.0% | 0.0104 | 113 ms | PASS |
+| **12.in** | $12 \times 8 \times 8$ | 768 | 32 | **32** | 0 | 0.0% | 0.0417 | 110 ms | PASS |
+| **13.in** | $12 \times 8 \times 8$ | 768 | 14 | **14** | 0 | 0.0% | 0.0182 | 111 ms | PASS |
+| **14.in** | $16 \times 16 \times 8$ | 2,048 | 18 | **18** | 0 | 0.0% | 0.0088 | 102 ms | PASS |
+| **15.in** | $32 \times 32 \times 12$ | 12,288 | 1,014 | **1,001** | -13 | **-1.3%** | 0.0815 | 141 ms | PASS |
+| **16.in** | $128 \times 128 \times 16$ | 262,144 | 9,346 | **9,170** | -176 | **-1.9%** | 0.0350 | 582 ms | PASS |
+| **17.in** | $256 \times 256 \times 16$ | 1,048,576 | 25,161 | **24,776** | -385 | **-1.5%** | 0.0236 | 1420 ms | PASS |
 
-**Distance from the 2D optimum.** An independent exact solver (concave vertices and maximum independent chords by bipartite matching) gives these minima: we match it on `2.in`-`6.in` and `9.in`; on `7.in` we use 37,151 against 37,129, and on `8.in` 311,551 against 307,876. The larger gap comes from 32 x 32 parents, where the guillotine DP and Largest-Box-First are disabled.
+**Distance from the 2D optimum.** An independent exact solver (concave vertices and maximum independent chords by bipartite matching) gives these minima: we match it on `2.in`-`6.in` and `9.in`; on `7.in` we use 37,150 against 37,129, and on `8.in` 310,963 against 307,876. The larger gap comes from 32 x 32 parents, where the guillotine DP and Largest-Box-First are disabled.
 
 ### Analysis of Baseline Ties and Differences
 
@@ -231,10 +231,11 @@ Our output uses 1 `land`, 3 `sea` and 3 `sand` regions, plus 1 `forest` cell at 
 
 The competition evaluation places equal importance on **execution speed** (total measured runtime) and **compression ratio** (weighted 70% 3D, 30% 2D), requiring that all maps run strictly within 5 seconds.
 
-1. **Pruning by size**: the costly searches are limited to $V \le 256$ (2D) and $V \le 4096$ (3D). This keeps `8.in` fast but costs 3,675 regions against its optimum.
+1. **Pruning by size**: the costly searches are limited to $V \le 256$ (2D) and $V \le 4096$ (3D). This keeps `8.in` fast but leaves 3,087 extra regions against its optimum.
 2. **3D budget**: 3D carries 70% of the compression score, so it gets the larger limit.
-3. **Time governor**: without in-block checks, several legal 4,194,304-cell stress maps exceeded 5 s (up to 15.1 s). With them, all 13 stress maps finished in 2.5-4.4 s in our run, including one slowed by other machine load, and passed the validator. The cost is compression on some of them, e.g. 3,620 to 4,067 regions on a very sparse 3D map with one parent.
-4. **Limitation**: a wall-clock limit depends on the grading machine. Under heavy machine load we did observe public tests exceeding the normal time or losing compression.
+3. **Measured ablation of candidates**: the original reverse scans still grew boxes towards positive axes, into cells already taken, and never won a block on the public tests. Mirroring them saved 697 regions on the public tests (`8.in`: 311,551 to 310,963; `17.in`: 24,856 to 24,776). In 2D, removing the best-axis greedy changed no count on the public tests or four generated maps, so it was dropped for speed. In 3D, removing it added 2-4 regions on three of four generated maps, so it was kept.
+4. **Time governor**: without in-block checks, several legal 4,194,304-cell stress maps exceeded 5 s (up to 15.1 s). With them, all 13 stress maps finished in 1.1-3.2 s in our run and passed the validator. Some maps still reach the limit and so give up some compression.
+5. **Limitation**: a wall-clock limit depends on the grading machine. Under heavy machine load we did observe public tests exceeding the normal time or losing compression.
 
 ---
 
@@ -261,6 +262,6 @@ All AI-generated concepts were subjected to empirical and mathematical verificat
 
 Our solution for the CSW310 Spatial Block Compression Challenge balances compression efficiency and execution speed:
 - **100% Correctness**: Passed all public tests with zero gaps, zero overlaps, and strict parent containment.
-- **Superior Compression**: Surpasses `BaselineBasicCompression` on test cases (e.g., -18.2% on `2.in`, -16.7% on `10.in`, -346 regions on `7.in`, -305 regions on `17.in`).
-- **Speed**: 4.19 million cells in about 1.4 s on our machine, with an in-block time governor.
+- **Superior Compression**: Surpasses `BaselineBasicCompression` on test cases (e.g., -18.2% on `2.in`, -16.7% on `10.in`, -347 regions on `7.in`, -588 on `8.in`, -385 on `17.in`).
+- **Speed**: 4.19 million cells in about 1.1 s on our machine, with an in-block time governor.
 - **Robust Codebase**: Clean, idiomatic Java using standard library primitives, consuming ~91 KiB of source code (far below the 1 MiB limit).

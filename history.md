@@ -1,21 +1,16 @@
-# CSW310 Spatial Block Compression Challenge: Architectural Evolution History (Generations 0 to 7)
+# CSW310 Spatial Block Compression: Development History (Generations 0 to 11)
 
-## Executive Summary & Non-Regression Guarantee
+## Summary
 
-This document chronicles the complete algorithmic and empirical evolution of our Spatial Block Compression engine from its baseline inception to **Generation 7**.
+This file records how the solution developed. `solution/analysis.md` describes the final program; where the two differ, `analysis.md` is current.
 
-> **Rigorous Non-Regression Theorem ("Không Cắt Cái Này Bù Cái Kia")**:
-> In algorithm engineering, optimizations often suffer from trade-off degradation (e.g., improving 3D compression at the expense of 2D, or sacrificing correctness/runtime for a minor region reduction).
-> Throughout all 7 generations, our architecture enforces **Strict Pareto Optimality**:
-> 1. **Coverage & Disjointness**: Verified cell-by-cell with an independent oracle (`Validator.java`). Every single generation maintained **100% Validity (0 gaps, 0 overlaps, 0 boundary violations)**.
-> 2. **Monotonic Compression Ratio**: Total regions produced on any dataset $D$ satisfies:
->    $$\text{Regions}_{G+1}(D) \le \text{Regions}_{G}(D) \quad \forall G \in \{0, 1, 2, 3, 4, 5, 6, 7\}$$
->    No modification ever increased the region count on any test case.
-> 3. **Execution Runtime**: Across 18 public test cases (spanning over 5.5 million voxels), total execution time dropped from >9.2 seconds down to **~5.5 seconds**, with `17.in` executing in a record-low **839 ms** (far below the 5.0-second competition hard ceiling).
+- Public results (18 files): 385,630 regions (baseline) to **384,116** (Generation 11), 1,514 fewer. All outputs pass `Validator.java`.
+- Generations 0-9 list the figures recorded at the time. They were not re-measured, and runtimes from different sessions or machines are not comparable.
+- Corrections found by later review are marked **Correction**.
 
 ---
 
-## Benchmark Comparison Matrix Across All Generations
+## Benchmark Comparison Matrix, Generations 0 to 7
 
 *Evaluated on OpenJDK 17 64-Bit Server VM, verified with `Validator.java`.*
 
@@ -29,7 +24,7 @@ This document chronicles the complete algorithmic and empirical evolution of our
 | **5.in** | 2D ($64 \times 48$) | 3,072 | 294 | 294 | 294 | 294 | 294 | 294 | 294 | **294** | 0 | 281.8 ms | VALID |
 | **6.in** | 2D ($64 \times 64$) | 4,096 | 272 | 272 | 272 | 272 | 272 | 272 | 272 | **272** | 0 | 247.4 ms | VALID |
 | **7.in** | 2D ($512 \times 512$) | 262,144 | 37,497 | 37,152 | 37,152 | 37,151 | 37,151 | 37,151 | 37,151 | **37,151** | **-346 (-0.92%)** | **532.4 ms** | VALID |
-| **8.in** | 2D ($2048 \times 2048$) | 4,194,304 | 311,551 | 311,551 | 311,551 | 311,551 | 311,551 | 311,551 | 311,551 | **311,551** | Optimal | **770.4 ms** | VALID |
+| **8.in** | 2D ($2048 \times 2048$) | 4,194,304 | 311,551 | 311,551 | 311,551 | 311,551 | 311,551 | 311,551 | 311,551 | **311,551** | 0 | **770.4 ms** | VALID |
 | **9.in** | 2D ($120 \times 72$) | 8,640 | 630 | 628 | 628 | 628 | 628 | 628 | 628 | **628** | **-2 (-0.32%)** | 293.7 ms | VALID |
 | **10.in** | 3D ($2 \times 2 \times 2$) | 8 | 6 | 5 | 5 | 5 | 5 | 5 | 5 | **5** | **-1 (-16.7%)** | 207.8 ms | VALID |
 | **11.in** | 3D ($12 \times 8 \times 8$) | 768 | 8 | 8 | 8 | 8 | 8 | 8 | 8 | **8** | 0 | 238.2 ms | VALID |
@@ -43,7 +38,11 @@ This document chronicles the complete algorithmic and empirical evolution of our
 
 ---
 
-## Detailed Chronology of the 7 Generations
+**Correction**: this table once called `8.in` optimal. An exact 2D solver gives 307,876, so 311,551 is not optimal. The Generation 10 and 11 results are at the end of this file.
+
+---
+
+## Detailed Chronology
 
 ### Generation 0: Course Baseline (`BaselineBasicCompression`)
 - **Core Algorithm**: Naive Raster Greedy. Iterates over grid coordinates in strict order: $z \in [0, Z), y \in [0, Y), x \in [0, X)$. At the first unvisited voxel, expands maximal span along $X$, then sweeps $Y$, then sweeps $Z$.
@@ -90,7 +89,7 @@ This document chronicles the complete algorithmic and empirical evolution of our
   - Precomputes directional masks $U_i$ and $L_j$; tests hole-freeness in $O(1)$ CPU clock via `Long.bitCount(ge[i] & le[j]) == volume`.
   - Branch-and-bound exact cover with independent set witness lower bound and a 2,000-node safety abort budget.
 - **Empirical Gain**:
-  - Guarantees provably minimal cuboids on irregular components $\le 64$ cells. Total runtime across all 18 tests dropped to 6.30s.
+  - Gives provably minimal cuboids on components $\le 64$ cells when the search finishes within its budget. Total runtime across all 18 tests dropped to 6.30s.
 
 ### Generation 6: Collision-Proof Pattern Cache & Direct-Mapped Lookup (Commit `9293d9e`)
 - **Algorithmic Breakthrough**:
@@ -111,6 +110,7 @@ This document chronicles the complete algorithmic and empirical evolution of our
   2. *Single-Pass Adversarial Trap Detection (`AdversarialDetector.java`)*:
      - Computes adjacent label transition ratio $\tau = E_{\ne} / E_{adj}$.
      - If $\tau > 0.96$ (Checkerboard / High-frequency noise), emits $1 \times 1 \times 1$ unit voxels directly in $O(V)$, completely bypassing search and cache overhead.
+     - **Correction**: the output is valid but not always optimal.
 - **Empirical Gain**:
   - `17.in` (1.05M cells 3D) execution time dropped to an all-time record **839.3 ms**!
   - All 18 public tests combined execute in **5.84 seconds** total.
@@ -127,11 +127,12 @@ This document chronicles the complete algorithmic and empirical evolution of our
      - If the global token bucket exhausts, `TinyCover` instantaneously returns the $O(k)$ greedy incumbent (precomputed and 100% valid) without entering DFS.
   3. *Deterministic Self-Healing Fallback (`Compressor.java`)*:
      - Wrapped block tournament and consolidation within a guarded try-catch boundary.
-     - Guarantees 0-crash, 0-disqualification, 100% valid submission under any extreme hidden grading inputs.
+     - **Correction**: this did not prevent crashes or timeouts. Static buffers of about 512 MB failed at startup with a 256 MB heap, and errors were swallowed silently. Fixed in Generation 10.
   4. *Pareto Frontier Lockdown*:
-     - Unanimous consensus from both frontier auditors: at ~1.0µs/cell with 384,813 regions (-817 vs baseline) and 5.9s total time, the engine has reached the competition Pareto Frontier.
+     - Result at the time: 384,813 regions (-817 vs baseline) and 5.9s total time.
+     - **Correction**: the AI auditors' "Pareto frontier" verdict was wrong; Generation 11 reduced regions without a measured slowdown.
 
-### Generation 9: Grandmaster Dual-Model Synthesis (Argon & Sonnet Integration - Commit `Current`)
+### Generation 9: Grandmaster Dual-Model Synthesis (Argon & Sonnet Integration - Commits `39af625`, `44f8147`)
 - **Synthesis of Insights from Gemini 4 Argon High & Claude Sonnet 5.5 High**:
   1. *MurmurHash3 `fmix64` Avalanche Finalizer (`BlockCache.java` - from Gemini 4 Argon)*:
      - Applied 64-bit XOR-shift avalanche mixer to FNV-1a hash before direct-mapping to 4096 slots.
@@ -141,15 +142,47 @@ This document chronicles the complete algorithmic and empirical evolution of our
      - Resolves in nanoseconds without entering `TinyCover` DFS, saving thousands of recursive calls and preserving `GLOBAL_TINY_BUDGET`.
   3. *Conservative $\tau$-Gate Threshold ($\tau \ge 0.985$) & Active Wall-Clock Governor (`AdversarialDetector.java` & `Compressor.java` - from Claude Sonnet 5.5)*:
      - Tightened adversarial checkerboard threshold to $\tau \ge 0.985$ to ensure embedded long rods/plates in noisy maps are never prematurely pulverized into unit cells.
-     - Enforced active 4.0s wall-clock safety governor (`deadline = startTime + 4000`) guaranteeing zero TLE under any grading machine specifications.
+     - Enforced active 4.0s wall-clock safety governor (`deadline = startTime + 4000`).
+     - **Correction**: it was checked only between parent blocks, so legal stress maps took up to 15.1 s. Fixed in Generation 10.
   4. *Local Budget Refinement (`LOCAL_TINY_BUDGET = 1024` in `TinyCover.java`)*:
-     - Bounded per-component exploration to 1024 nodes while preserving exact branch-and-bound optimality.
+     - Bounded per-component exploration to 1024 nodes. The result is optimal only when the search finishes within the budget.
+
+### Generation 10: Safety Review (Commit `f38b2d0`)
+- **Problem found**: all public tests passed, but a review with large legal maps and small heaps found:
+  - up to 15.1 s on 4,194,304-cell maps (limit 5 s);
+  - about 512 MB of fixed buffers, four times more than any legal map needs;
+  - an unused `SymCache`, a `solveGuillotine3D` that only returned `null`, a report that did not match the code, and a ZIP without the required folders.
+- **Changes**:
+  1. Time governor measured from the start of `main` and checked inside blocks: no new optimisation after 2.2 s, X-runs only after 3.0 s.
+  2. Buffers sized to the actual parent; `2.in` ran with a 64 MB heap, and `8.in` and `17.in` with 256 MB.
+  3. Block errors are reported on stderr before the fallback.
+  4. Dead code removed; report and ZIP corrected.
+- **Result**: public region counts unchanged. The stress maps that exceeded 5 s then finished under 5 s (3D noise, 8x8x8 parents: 15.1 s to 3.3 s), at some cost in compression on a few of them.
+
+### Generation 11: Measured Candidate Ablation and Mirrored Reverse Scan (after `f38b2d0`)
+- **Method**: each tournament candidate was timed and its wins counted, then removed in turn to see how many regions were lost.
+- **Findings**:
+  1. The reverse scans never won a block on the public tests. They started at the far corner but still grew boxes in the positive direction, where cells were already taken, so they produced mostly unit cells.
+  2. In 2D, the best-axis greedy changed no count on the public tests or on four generated maps.
+  3. In 3D, removing it added 2-4 regions on three of four generated maps.
+- **Changes**: reverse scans now run the forward solver on a block mirrored along every axis and map the regions back; best-axis greedy is used in 3D only.
+- **Result** (median of 5 interleaved runs, i7-10510U, Windows 10, Java 25; other public counts unchanged):
+
+| Dataset | Gen 10 regions | Gen 11 regions | Gen 10 time | Gen 11 time |
+| :---: | :---: | :---: | :---: | :---: |
+| **7.in** | 37,151 | **37,150** | 878 ms | 863 ms |
+| **8.in** | 311,551 | **310,963** | 1,241 ms | 1,083 ms |
+| **15.in** | 1,002 | **1,001** | 140 ms | 141 ms |
+| **16.in** | 9,197 | **9,170** | 640 ms | 582 ms |
+| **17.in** | 24,856 | **24,776** | 1,546 ms | 1,420 ms |
+
+- **Checks**: 16/16 public tests, 3,000 random maps with a separate validator (0 failures), and 13 stress maps in 1.1-3.2 s, none with more regions than Generation 10.
+- **AI assistance (Generations 10-11)**: Claude reviewed the code, wrote these changes and the test tools, and ran the checks listed above.
 
 ---
 
 ## Conclusion
 
-Over 9 generations of algorithmic refinement, the engine achieved:
-- **817 Regions Saved** over the competition baseline (384,813 regions, 100% VALID on all 18 public tests).
-- **Sub-second execution** across all maps (average ~0.40s per map, max 1.1s on `17.in`).
-- **Mathematical perfection and adversarial immunity**: certified with dual lower-bound early exit, 64-bit fixed-point math, `fmix64` avalanche cache, $O(1)$ L-tromino resolution, global token bucket, and deterministic self-healing fallback.
+- **Result**: 384,116 regions on the 18 public files, 1,514 fewer than the baseline, all valid.
+- **Known limits**: `8.in` uses 3,087 regions more than its 2D optimum and `7.in` uses 21 more. 3D results are heuristic. The time governor depends on machine speed, so maps that reach it can give different results on different machines.
+- **Possible next steps**: an exact 2D solver for medium parents, and local re-optimisation of neighbouring boxes in 3D.

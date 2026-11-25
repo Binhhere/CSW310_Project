@@ -218,13 +218,21 @@ public class Compressor {
             }
         }
 
-        // Strategy C: Dynamic Max-Volume Greedy (forward and reverse)
+        // Reverse scans run the forward solver on the block mirrored along all axes.
+        byte[] mirrored = new byte[vol];
+        for (int i = 0; i < vol; i++) mirrored[i] = block[vol - 1 - i];
+
+        // Strategy C: Dynamic Max-Volume Greedy, forward and reverse (3D only;
+        // in 2D it never improved the result over the other candidates in our tests).
         // A null result means the soft deadline passed before the candidate was complete.
-        for (int dir = 0; dir < 2; dir++) {
-            List<Region> cand = solveDynamicMaxVol(block, px, py, pz, dir == 1);
-            if (cand == null) return bestOrFallback(candidates, block, px, py, pz);
-            if (cand.size() <= lb) return cand;
-            addCandidate(candidates, cand);
+        if (pz > 1) {
+            for (int dir = 0; dir < 2; dir++) {
+                List<Region> cand = solveDynamicMaxVol(dir == 1 ? mirrored : block, px, py, pz);
+                if (cand == null) return bestOrFallback(candidates, block, px, py, pz);
+                if (dir == 1) mirrorBack(cand, px, py, pz);
+                if (cand.size() <= lb) return cand;
+                addCandidate(candidates, cand);
+            }
         }
 
         // Strategy D: Directional Greedy Permutations
@@ -241,8 +249,9 @@ public class Compressor {
 
         for (int[] o : orders) {
             for (int dir = 0; dir < 2; dir++) {
-                List<Region> cand = solveDirectional(block, px, py, pz, o, dir == 1);
+                List<Region> cand = solveDirectional(dir == 1 ? mirrored : block, px, py, pz, o);
                 if (cand == null) return bestOrFallback(candidates, block, px, py, pz);
+                if (dir == 1) mirrorBack(cand, px, py, pz);
                 if (cand.size() <= lb) return cand;
                 addCandidate(candidates, cand);
             }
@@ -250,6 +259,15 @@ public class Compressor {
 
         if (softExpired()) return bestOrFallback(candidates, block, px, py, pz);
         return recombineByComponent(candidates, block, px, py, pz);
+    }
+
+    // Maps regions found in the mirrored block back to original coordinates.
+    private static void mirrorBack(List<Region> regions, int px, int py, int pz) {
+        for (Region r : regions) {
+            r.x = px - r.x - r.w;
+            r.y = py - r.y - r.h;
+            r.z = pz - r.z - r.d;
+        }
     }
 
     private static void addCandidate(List<List<Region>> candidates, List<Region> cand) {
@@ -664,18 +682,14 @@ public class Compressor {
     }
 
     // Directional greedy expansion
-    private static List<Region> solveDirectional(byte[] block, int px, int py, int pz, int[] order, boolean rev) {
+    private static List<Region> solveDirectional(byte[] block, int px, int py, int pz, int[] order) {
         int tick = 0;
         int currentRun = ++runId;
         List<Region> regions = new ArrayList<>();
 
-        int zStart = rev ? pz - 1 : 0, zEnd = rev ? -1 : pz, zStep = rev ? -1 : 1;
-        int yStart = rev ? py - 1 : 0, yEnd = rev ? -1 : py, yStep = rev ? -1 : 1;
-        int xStart = rev ? px - 1 : 0, xEnd = rev ? -1 : px, xStep = rev ? -1 : 1;
-
-        for (int z = zStart; z != zEnd; z += zStep) {
-            for (int y = yStart; y != yEnd; y += yStep) {
-                for (int x = xStart; x != xEnd; x += xStep) {
+        for (int z = 0; z < pz; z++) {
+            for (int y = 0; y < py; y++) {
+                for (int x = 0; x < px; x++) {
                     int idx = (z * py + y) * px + x;
                     if (visitedBuffer[idx] == currentRun) continue;
                     if ((++tick & 63) == 0 && softExpired()) return null;
@@ -751,26 +765,20 @@ public class Compressor {
     }
 
     // Dynamic Best-Axis / Max-Volume Greedy
-    private static List<Region> solveDynamicMaxVol(byte[] block, int px, int py, int pz, boolean rev) {
+    private static List<Region> solveDynamicMaxVol(byte[] block, int px, int py, int pz) {
         int tick = 0;
         int currentRun = ++runId;
         List<Region> regions = new ArrayList<>();
 
-        int zStart = rev ? pz - 1 : 0, zEnd = rev ? -1 : pz, zStep = rev ? -1 : 1;
-        int yStart = rev ? py - 1 : 0, yEnd = rev ? -1 : py, yStep = rev ? -1 : 1;
-        int xStart = rev ? px - 1 : 0, xEnd = rev ? -1 : px, xStep = rev ? -1 : 1;
-
-        int[][] orders = (pz == 1) ?
-            new int[][] { {0, 1, 2}, {1, 0, 2} } :
-            new int[][] {
+        int[][] orders = new int[][] {
                 {0, 1, 2}, {0, 2, 1},
                 {1, 0, 2}, {1, 2, 0},
                 {2, 0, 1}, {2, 1, 0}
             };
 
-        for (int z = zStart; z != zEnd; z += zStep) {
-            for (int y = yStart; y != yEnd; y += yStep) {
-                for (int x = xStart; x != xEnd; x += xStep) {
+        for (int z = 0; z < pz; z++) {
+            for (int y = 0; y < py; y++) {
+                for (int x = 0; x < px; x++) {
                     int idx = (z * py + y) * px + x;
                     if (visitedBuffer[idx] == currentRun) continue;
                     if ((++tick & 63) == 0 && softExpired()) return null;

@@ -22,7 +22,7 @@ This solution implements a high-performance spatial block compressor and standal
    - Monochromatic fast-path
    - Guillotine Slicing Dynamic Programming (for small blocks)
    - Global Largest-Box-First (Maximal Monochromatic Block Heuristic)
-   - Dynamic Best-Axis Greedy with depth-priority tie-breaking
+   - Dynamic Best-Axis Greedy (3D) with depth-priority tie-breaking
    - Multi-Permutation Directional Greedy (all 6 coordinate permutations, forward and backward)
    - Iterative Pairwise Merging / Consolidation post-processor
 3. `Validator.java`: Rigorous standalone validator that checks exact reconstruction, zero gaps, zero overlaps, label fidelity, and parent boundary containment.
@@ -86,6 +86,6 @@ for t in tests:
 ---
 
 ## Resource Limits & Compliance
-- **Execution Time**: The largest test case ($4,194,304$ cells) took **1.4 seconds** (median of 5, i7-10510U) (strict limit: 5.0 seconds).
+- **Execution Time**: The largest test case ($4,194,304$ cells) took **1.1 seconds** (median of 5, i7-10510U) (strict limit: 5.0 seconds).
 - **Source Size**: Uncompressed Java sources combine to **~91 KiB** (strict limit: 1 MiB / 1,048,576 bytes).
 - **Standard Library**: Strict compliance; no third-party packages or non-standard APIs.
